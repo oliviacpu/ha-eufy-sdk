@@ -299,6 +299,39 @@ def device_offline(record: dict | None, now_ms: float | None = None) -> bool:
     return False
 
 
+def has_liveness_facts(record: dict | None) -> bool:
+    """
+    Whether the bridge forwarded a liveness fact `device_offline` judges this device by.
+
+    An availability observation, a live feed or transport, or a `lastSeenMs` for a
+    class that can go stale. Without one, only the legacy `deviceStatus` is left.
+    """
+    rec = record or {}
+    if rec.get("availability") in ("unavailable", "available"):
+        return True
+    if rec.get("streaming") or rec.get("p2pReachable"):
+        return True
+    last_seen = rec.get("lastSeenMs")
+    return (
+        isinstance(last_seen, (int, float))
+        and not isinstance(last_seen, bool)
+        and _staleness_window_ms(rec) is not None
+    )
+
+
+def judges_online(record: dict | None) -> bool:
+    """
+    Whether this integration can say if the device is online.
+
+    A device that reports `deviceStatus` (an older bridge), or a camera or station,
+    whose liveness the bridge reports and `device_offline` judges.
+    """
+    rec = record or {}
+    if rec.get("state", {}).get("deviceStatus") is not None:
+        return True
+    return _staleness_window_ms(rec) is not None
+
+
 def label_for(prop: str) -> str:
     """Turn a camelCase name into a human label ('statusLed' -> 'Status Led')."""
     spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", prop)

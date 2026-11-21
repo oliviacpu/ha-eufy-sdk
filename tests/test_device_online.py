@@ -1,6 +1,7 @@
 # ruff: noqa: ANN201, D100, D102, INP001, PT009, SLF001
 
 import asyncio
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -182,14 +183,54 @@ class OnlineSensorTests(unittest.TestCase):
             EufyOnlineBinarySensor(coordinator(), SN).unique_id, f"{SN}_online"
         )
 
-    def test_created_only_for_devices_reporting_status(self):
+    def test_created_for_cameras_and_devices_reporting_status(self):
+        # A camera is judged from the bridge's liveness facts even without
+        # deviceStatus (the SDK withholds param 1131 where it means something else);
+        # a sensor without deviceStatus has nothing to judge it by.
+        c = coordinator(device_status=True)
+        c.data["T8900P0000000001"] = {
+            "sn": "T8900P0000000001",
+            "codec": "sensor",
+            "capabilities": ["contact"],
+            "state": {"open": False},
+        }
         entry = Mock()
-        entry.runtime_data.coordinator = coordinator(device_status=True)
+        entry.runtime_data.coordinator = c
         entry.runtime_data.properties = {}
         added: list = []
         asyncio.run(async_setup_entry(Mock(), entry, added.extend))
         online = [e for e in added if isinstance(e, EufyOnlineBinarySensor)]
-        self.assertEqual([e._sn for e in online], [SN])
+        self.assertEqual([e._sn for e in online], [SN, INDOOR_SN])
+
+
+class OnlineFromLivenessTests(unittest.TestCase):
+    """With liveness facts the Online sensor gives `device_offline`'s verdict."""
+
+    def sensor(self, **facts: object) -> EufyOnlineBinarySensor:
+        c = coordinator(with_status=False)
+        c.data[SN].update({"power": "battery", **facts})
+        return EufyOnlineBinarySensor(c, SN)
+
+    def test_a_reachable_station_session_is_online(self):
+        self.assertTrue(self.sensor(p2pReachable=True, lastSeenMs=0).is_on)
+
+    def test_a_recent_report_is_online_and_a_long_silence_offline(self):
+        now = time.time() * 1000
+        self.assertTrue(self.sensor(lastSeenMs=now - 60_000).is_on)
+        self.assertFalse(self.sensor(lastSeenMs=now - 7 * 60 * 60 * 1000).is_on)
+
+    def test_an_availability_observation_decides(self):
+        self.assertFalse(
+            self.sensor(availability="unavailable", p2pReachable=True).is_on
+        )
+
+    def test_facts_beat_a_withheld_or_contradicting_status(self):
+        c = coordinator(device_status=False)
+        c.data[SN]["p2pReachable"] = True
+        self.assertTrue(EufyOnlineBinarySensor(c, SN).is_on)
+
+    def test_a_camera_without_facts_or_status_is_unknown(self):
+        self.assertIsNone(self.sensor().is_on)
 
 
 if __name__ == "__main__":
