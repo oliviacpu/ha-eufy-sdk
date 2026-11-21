@@ -37,3 +37,15 @@ fork. Its `main` is upstream's `main` (its releases) plus the changes listed bel
 ## Changes in this fork
 
 Newest first.
+
+### Online sensors judged from the bridge's liveness facts (2026-11-21)
+
+- **What it changes:** a device's Online (connectivity) sensor gives the same verdict `device_offline` gives its other
+  entities, and every camera and station gets one. Unique ids are unchanged, so existing Online entities come back.
+- **Cause:** the sensor read only the cloud's `deviceStatus` (param 1131) and was created only for devices reporting
+  it. The SDK's beta withholds 1131 on most cameras, since it means different things on different devices, so behind
+  the current bridge every camera's Online sensor went unavailable. Upstream's `dev` reads `deviceStatus` the same way.
+- **Change:** `entity.py` gains `has_liveness_facts` and `judges_online`; `binary_sensor.py`'s Online sensor uses
+  `device_offline` when the bridge forwards any liveness fact (an availability observation, a live feed or station
+  session, `lastSeenMs` against the device class's window), else `deviceStatus` as before. Tests:
+  `tests/test_device_online.py`.

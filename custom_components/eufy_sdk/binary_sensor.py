@@ -20,7 +20,10 @@ from .entity import (
     EufySdkDeviceEntity,
     EufySdkPropertyEntity,
     classify,
+    device_offline,
     has_capability,
+    has_liveness_facts,
+    judges_online,
     solix_device_info,
 )
 from .pushmap import (
@@ -110,13 +113,14 @@ async def async_setup_entry(
         for sn, dev in coordinator.data.items()
         if "doorbell" in dev.get("capabilities", [])
     )
-    # An "Online" sensor per device that reports the cloud's `deviceStatus` (battery
-    # cameras, HomeBase-attached devices). The device's other entities go unavailable
+    # An "Online" sensor per device whose online state this integration can judge: one
+    # that reports the cloud's `deviceStatus`, or a camera or station, judged from the
+    # liveness facts the bridge forwards. The device's other entities go unavailable
     # while it is offline; this one stays available so the offline state is visible.
     entities.extend(
         EufyOnlineBinarySensor(coordinator, sn)
         for sn, dev in coordinator.data.items()
-        if dev.get("state", {}).get("deviceStatus") is not None
+        if judges_online(dev)
     )
     # Anker Solix (separate account): a Wi-Fi connectivity sensor per device (polled).
     solix = getattr(coordinator, "solix_devices", {}) or {}
@@ -324,11 +328,12 @@ class EufyPackageBinarySensor(EufySdkDeviceEntity, BinarySensorEntity, RestoreEn
 
 class EufyOnlineBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
     """
-    Whether the device is online, from the cloud's `deviceStatus` (device-list poll).
+    Whether the device is online: the same verdict `device_offline` gives every entity.
 
-    The eufy app shows such a device as offline, e.g. a battery camera that lost its
-    radio link to the HomeBase. This sensor stays available while the device is
-    offline, since that is the state it exists to show.
+    From the liveness facts the bridge forwards when it has any, else the cloud's
+    `deviceStatus` (an older bridge). The eufy app shows such a device as offline,
+    e.g. a battery camera that lost its radio link to the HomeBase. This sensor stays
+    available while the device is offline, since that is the state it exists to show.
     """
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
@@ -343,7 +348,9 @@ class EufyOnlineBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """True while `deviceStatus` is True; None until the device reports it."""
+        """Not offline by the liveness facts; else `deviceStatus`; else None."""
+        if has_liveness_facts(self.device):
+            return not device_offline(self.device)
         status = self.device.get("state", {}).get("deviceStatus")
         return None if status is None else bool(status)
 
